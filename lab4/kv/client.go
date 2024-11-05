@@ -81,15 +81,14 @@ func (kv *Kv) Set(ctx context.Context, key string, value string, ttl time.Durati
 	var err error
 	var wg sync.WaitGroup
 
-	wg.Add(len(nodes))
 	for _, node := range nodes {
 		kvClient, status := kv.clientPool.GetClient(node)
 		if status != nil {
 			err = status
-			wg.Done()
 			continue
 		}
 
+		wg.Add(1)
 		go func() {
 			_, set := kvClient.Set(ctx, &proto.SetRequest{
 				Key:   key,
@@ -125,15 +124,14 @@ func (kv *Kv) Delete(ctx context.Context, key string) error {
 	var err error
 	var wg sync.WaitGroup
 
-	wg.Add(len(nodes))
 	for _, node := range nodes {
 		kvClient, status := kv.clientPool.GetClient(node)
 		if status != nil {
 			err = status
-			wg.Done()
 			continue
 		}
 
+		wg.Add(1)
 		go func() {
 			_, deleted := kvClient.Delete(ctx, &proto.DeleteRequest{
 				Key: key,
