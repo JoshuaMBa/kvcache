@@ -2,10 +2,26 @@ package kv
 
 import (
 	"context"
+	"sync"
+	"time"
 
 	"cs426.yale.edu/lab4/kv/proto"
 	"github.com/sirupsen/logrus"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+type ValueEntry struct {
+	value     string
+	expiresAt time.Time
+}
+
+type ShardData struct {
+	hosted bool
+	data   map[string]*ValueEntry
+	lock   sync.RWMutex
+}
 
 type KvServerImpl struct {
 	proto.UnimplementedKvServer
@@ -15,6 +31,9 @@ type KvServerImpl struct {
 	listener   *ShardMapListener
 	clientPool ClientPool
 	shutdown   chan struct{}
+
+	numShards  int
+	shards     map[int]*ShardData
 }
 
 func (server *KvServerImpl) handleShardMapUpdate() {
@@ -41,11 +60,58 @@ func MakeKvServer(nodeName string, shardMap *ShardMap, clientPool ClientPool) *K
 		listener:   &listener,
 		clientPool: clientPool,
 		shutdown:   make(chan struct{}),
+		numShards:  shardMap.NumShards(),
+		shards:     make(map[int]*ShardData),
 	}
+
+	for i := 0; i < shardMap.NumShards(); i++ {
+		server.shards[i] = &ShardData{
+			data: make(map[string]*ValueEntry),
+			lock: sync.RWMutex{},
+		}
+	}
+
+	shardsForMe := shardMap.ShardsForNode(nodeName)
+	for i := 0; i < len(shardsForMe); i++ {
+		server.shards[shardsForMe[i] - 1].hosted = true
+	}
+
+	go server.ttlCleanupLoop()
 	go server.shardMapListenLoop()
 	server.handleShardMapUpdate()
 	return &server
 }
+
+func (server *KvServerImpl) ttlCleanupLoop() {
+    ticker := time.NewTicker(5 * time.Second)
+    defer ticker.Stop()
+
+    for {
+        select {
+        case <-server.shutdown:
+            return
+        case <-ticker.C:
+            server.cleanupExpiredEntries()
+        }
+    }
+}
+
+func (server *KvServerImpl) cleanupExpiredEntries() {
+    now := time.Now()
+
+    for _, shard := range server.shards {
+        shard.lock.Lock()
+
+        for key, entry := range shard.data {
+            if entry.expiresAt.Before(now) {
+                delete(shard.data, key)
+            }
+        }
+
+        shard.lock.Unlock()
+    }
+}
+
 
 func (server *KvServerImpl) Shutdown() {
 	server.shutdown <- struct{}{}
@@ -56,37 +122,90 @@ func (server *KvServerImpl) Get(
 	ctx context.Context,
 	request *proto.GetRequest,
 ) (*proto.GetResponse, error) {
-	// Trace-level logging for node receiving this request (enable by running with -log-level=trace),
-	// feel free to use Trace() or Debug() logging in your code to help debug tests later without
-	// cluttering logs by default. See the logging section of the spec.
+	if request.Key == "" {
+		return &proto.GetResponse{Value: "", WasFound: false}, status.Error(codes.InvalidArgument, "Key cannot be empty")
+	}
+
+	shardID := GetShardForKey(request.Key, server.numShards)
+	shard := server.shards[shardID-1]
+
+	if !shard.hosted {
+		return &proto.GetResponse{Value: "", WasFound: false}, status.Error(codes.NotFound, "Shard not hosted")
+	}
+
+	shard.lock.RLock()
+	defer shard.lock.RUnlock()
+
+	entry, exists := shard.data[request.Key]
+	if !exists || time.Now().After(entry.expiresAt) {
+		return &proto.GetResponse{Value: "", WasFound: false}, nil
+	}
+
 	logrus.WithFields(
 		logrus.Fields{"node": server.nodeName, "key": request.Key},
-	).Trace("node received Get() request")
+	).Trace("Get key found")
 
-	panic("TODO: Part A")
+	return &proto.GetResponse{Value: entry.value, WasFound: true}, nil
 }
 
 func (server *KvServerImpl) Set(
 	ctx context.Context,
 	request *proto.SetRequest,
 ) (*proto.SetResponse, error) {
-	logrus.WithFields(
-		logrus.Fields{"node": server.nodeName, "key": request.Key},
-	).Trace("node received Set() request")
+	if request.Key == "" {
+		return nil, status.Error(codes.InvalidArgument, "Key cannot be empty")
+	}
 
-	panic("TODO: Part A")
+	shardID := GetShardForKey(request.Key, server.numShards)
+	shard := server.shards[shardID-1]
+
+	if !shard.hosted {
+		return nil, status.Error(codes.NotFound, "Shard not hosted")
+	}
+
+	shard.lock.Lock()
+	defer shard.lock.Unlock()
+
+	expiry := time.Now().Add(time.Duration(request.TtlMs) * time.Millisecond)
+	shard.data[request.Key] = &ValueEntry{
+		value:     request.Value,
+		expiresAt: expiry,
+	}
+
+	logrus.WithFields(
+		logrus.Fields{"node": server.nodeName, "key": request.Key, "ttl_ms": request.TtlMs},
+	).Debug("Set key with TTL")
+
+	return &proto.SetResponse{}, nil
 }
 
 func (server *KvServerImpl) Delete(
 	ctx context.Context,
 	request *proto.DeleteRequest,
 ) (*proto.DeleteResponse, error) {
+	if request.Key == "" {
+		return nil, status.Error(codes.InvalidArgument, "Key cannot be empty")
+	}
+
+	shardID := GetShardForKey(request.Key, server.numShards)
+	shard := server.shards[shardID-1]
+
+	if !shard.hosted {
+		return nil, status.Error(codes.NotFound, "Shard not hosted")
+	}
+
+	shard.lock.Lock()
+	defer shard.lock.Unlock()
+
+	delete(shard.data, request.Key)
+
 	logrus.WithFields(
 		logrus.Fields{"node": server.nodeName, "key": request.Key},
-	).Trace("node received Delete() request")
+	).Debug("Delete key")
 
-	panic("TODO: Part A")
+	return &proto.DeleteResponse{}, nil
 }
+
 
 func (server *KvServerImpl) GetShardContents(
 	ctx context.Context,
