@@ -15,7 +15,8 @@ import (
 type Kv struct {
 	shardMap   *ShardMap
 	clientPool ClientPool
-	mu         sync.Mutex
+	smu        sync.Mutex
+	dmu        sync.Mutex
 
 	// Add any client-side state you want here
 }
@@ -35,13 +36,11 @@ func (kv *Kv) Get(ctx context.Context, key string) (string, bool, error) {
 	logrus.WithFields(
 		logrus.Fields{"key": key},
 	).Trace("client sending Get() request")
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
 
 	shard := GetShardForKey(key, kv.shardMap.NumShards())
 	nodes := kv.shardMap.NodesForShard(shard)
 	if len(nodes) == 0 {
-		return "", false, errors.New(fmt.Sprintf("no node hosts shard %v", shard))
+		return "", false, errors.New(fmt.Sprintf("Get: no node hosts shard %v", shard))
 	}
 
 	var err error
@@ -73,7 +72,43 @@ func (kv *Kv) Set(ctx context.Context, key string, value string, ttl time.Durati
 		logrus.Fields{"key": key},
 	).Trace("client sending Set() request")
 
-	panic("TODO: Part B")
+	shard := GetShardForKey(key, kv.shardMap.NumShards())
+	nodes := kv.shardMap.NodesForShard(shard)
+	if len(nodes) == 0 {
+		return errors.New(fmt.Sprintf("Set: no node hosts shard %v", shard))
+	}
+
+	var err error
+	var wg sync.WaitGroup
+
+	wg.Add(len(nodes))
+	for _, node := range nodes {
+		kvClient, status := kv.clientPool.GetClient(node)
+		if status != nil {
+			err = status
+			wg.Done()
+			continue
+		}
+
+		go func() {
+			_, set := kvClient.Set(ctx, &proto.SetRequest{
+				Key:   key,
+				Value: value,
+				TtlMs: int64(ttl),
+			})
+
+			if set != nil {
+				kv.smu.Lock()
+				err = set
+				kv.smu.Unlock()
+			}
+			wg.Done()
+		}()
+	}
+
+	wg.Wait()
+
+	return err
 }
 
 func (kv *Kv) Delete(ctx context.Context, key string) error {
@@ -81,5 +116,39 @@ func (kv *Kv) Delete(ctx context.Context, key string) error {
 		logrus.Fields{"key": key},
 	).Trace("client sending Delete() request")
 
-	panic("TODO: Part B")
+	shard := GetShardForKey(key, kv.shardMap.NumShards())
+	nodes := kv.shardMap.NodesForShard(shard)
+	if len(nodes) == 0 {
+		return errors.New(fmt.Sprintf("Delete: no node hosts shard %v", shard))
+	}
+
+	var err error
+	var wg sync.WaitGroup
+
+	wg.Add(len(nodes))
+	for _, node := range nodes {
+		kvClient, status := kv.clientPool.GetClient(node)
+		if status != nil {
+			err = status
+			wg.Done()
+			continue
+		}
+
+		go func() {
+			_, deleted := kvClient.Delete(ctx, &proto.DeleteRequest{
+				Key: key,
+			})
+
+			if deleted != nil {
+				kv.dmu.Lock()
+				err = deleted
+				kv.dmu.Unlock()
+			}
+			wg.Done()
+		}()
+	}
+
+	wg.Wait()
+
+	return err
 }
