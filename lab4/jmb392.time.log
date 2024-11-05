@@ -7,8 +7,19 @@ Date   Started  Spent  Work completed
 -----  -------  -----  --------------
 11/4   8:00pm   0:30   Implemented parts B1, B2, and B3 
 11/5   10:00am  1:00   Implemented parts B4, B5, and finished discussion questions
+11/5   4:00pm   0:30   Update `client.go` code to fix potential concurrency error
                 -----
-                1:30 TOTAL time spent
+                2:00 TOTAL time spent
 
 DISCUSSION
+I didn't encounter many issues during this problem set. I think this problem set was 
+a lot more straightforward than implementing the raft algorithm, largely because there 
+were fewer concerns regarding concurrency. In my implementation of the client side, I 
+wanted to minimize thread contention as much as possible (which is part of the 
+reason why I just chose to go with a randomized load balancer), so there are only 
+a couple of places where locks are acquired (mainly to synchronize error handling).
+It would have been interesting to develop a more complex shard distribution strategy,
+but I think this would require a lot more changes to other parts of the code base, and 
+there are so many tradeoffs involved with this decision that I thought it was best to 
+stick with a simple strategy for this problem set.
 
