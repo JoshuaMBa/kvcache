@@ -5,6 +5,7 @@ import (
 	"cs426.yale.edu/lab4/kv/proto"
 	"errors"
 	"fmt"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -28,15 +29,6 @@ func MakeKv(shardMap *ShardMap, clientPool ClientPool) *Kv {
 	return kv
 }
 
-func (kv *Kv) getNode(shard int) (string, error) {
-	nodes := kv.shardMap.NodesForShard(shard)
-	if len(nodes) == 0 {
-		return "", errors.New(fmt.Sprintf("no node hosts shard %v", shard))
-	}
-
-	return nodes[0], nil
-}
-
 func (kv *Kv) Get(ctx context.Context, key string) (string, bool, error) {
 	// Trace-level logging -- you can remove or use to help debug in your tests
 	// with `-log-level=trace`. See the logging section of the spec.
@@ -47,19 +39,28 @@ func (kv *Kv) Get(ctx context.Context, key string) (string, bool, error) {
 	defer kv.mu.Unlock()
 
 	shard := GetShardForKey(key, kv.shardMap.NumShards())
-	node, err := kv.getNode(shard)
-	if err != nil {
-		return "", false, err
+	nodes := kv.shardMap.NodesForShard(shard)
+	if len(nodes) == 0 {
+		return "", false, errors.New(fmt.Sprintf("no node hosts shard %v", shard))
 	}
 
-	kvClient, err := kv.clientPool.GetClient(node)
-	if err != nil {
-		return "", false, err
-	}
+	var err error
+	var response *proto.GetResponse
+	start := rand.Intn(len(nodes))
+	for i := 0; i < len(nodes); i++ {
+		var kvClient proto.KvClient
+		kvClient, err = kv.clientPool.GetClient(nodes[(start+i)%len(nodes)])
+		if err != nil {
+			continue
+		}
 
-	response, err := kvClient.Get(ctx, &proto.GetRequest{
-		Key: key,
-	})
+		response, err = kvClient.Get(ctx, &proto.GetRequest{
+			Key: key,
+		})
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		return "", false, err
 	}
