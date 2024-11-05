@@ -34,11 +34,87 @@ type KvServerImpl struct {
 
 	numShards  int
 	shards     map[int]*ShardData
+	hostedShards map[int]bool
+}
+
+func MakeKvServer(nodeName string, shardMap *ShardMap, clientPool ClientPool) *KvServerImpl {
+    listener := shardMap.MakeListener()
+    server := KvServerImpl{
+        nodeName:     nodeName,
+        shardMap:     shardMap,
+        listener:     &listener,
+        clientPool:   clientPool,
+        shutdown:     make(chan struct{}),
+        numShards:    shardMap.NumShards(),
+        shards:       make(map[int]*ShardData),
+        hostedShards: make(map[int]bool),
+    }
+
+    for i := 0; i < shardMap.NumShards(); i++ {
+        server.shards[i] = &ShardData{
+            data:   make(map[string]*ValueEntry),
+            lock:   sync.RWMutex{},
+			hosted: false,
+        }
+    }
+
+    go server.ttlCleanupLoop()
+    go server.shardMapListenLoop()
+    server.handleShardMapUpdate()
+    return &server
+}
+
+func contains(arr []int, val int) bool {
+    for _, id := range arr {
+        if id == val {
+            return true
+        }
+    }
+    return false
 }
 
 func (server *KvServerImpl) handleShardMapUpdate() {
-	// TODO: Part C
+    shardsForMe := server.shardMap.ShardsForNode(server.nodeName)
+
+    toAdd := make(map[int]bool)
+    toRemove := make(map[int]bool)
+
+    for _, shardID := range shardsForMe {
+        if !server.hostedShards[shardID-1] {
+            toAdd[shardID] = true
+        }
+    }
+
+    for shardID, hosted := range server.hostedShards {
+		if hosted && !contains(shardsForMe, shardID+1) {
+            toRemove[shardID+1] = true
+        }
+    }
+
+    for shardID := range toAdd {
+        err := server.copyShardData(shardID)
+        if err != nil {
+            logrus.WithFields(logrus.Fields{"shard": shardID}).Debug("Shard copy failed, initializing empty")
+            server.shards[shardID-1].lock.Lock()
+			server.shards[shardID-1].hosted = true
+            server.shards[shardID-1].data = make(map[string]*ValueEntry)
+            server.shards[shardID-1].lock.Unlock()
+        }
+		server.hostedShards[shardID-1] = true
+    }
+
+    for shardID := range toRemove {
+        shard := server.shards[shardID-1]
+        shard.lock.Lock()
+        server.shards[shardID-1].hosted = false
+        server.shards[shardID-1].data = make(map[string]*ValueEntry)
+        shard.lock.Unlock()
+        delete(server.hostedShards, shardID-1)
+		logrus.WithFields(logrus.Fields{"shard": shardID}).Debug("Successfully removed shard")
+    }
 }
+
+
 
 func (server *KvServerImpl) shardMapListenLoop() {
 	listener := server.listener.UpdateChannel()
@@ -50,36 +126,6 @@ func (server *KvServerImpl) shardMapListenLoop() {
 			server.handleShardMapUpdate()
 		}
 	}
-}
-
-func MakeKvServer(nodeName string, shardMap *ShardMap, clientPool ClientPool) *KvServerImpl {
-	listener := shardMap.MakeListener()
-	server := KvServerImpl{
-		nodeName:   nodeName,
-		shardMap:   shardMap,
-		listener:   &listener,
-		clientPool: clientPool,
-		shutdown:   make(chan struct{}),
-		numShards:  shardMap.NumShards(),
-		shards:     make(map[int]*ShardData),
-	}
-
-	for i := 0; i < shardMap.NumShards(); i++ {
-		server.shards[i] = &ShardData{
-			data: make(map[string]*ValueEntry),
-			lock: sync.RWMutex{},
-		}
-	}
-
-	shardsForMe := shardMap.ShardsForNode(nodeName)
-	for i := 0; i < len(shardsForMe); i++ {
-		server.shards[shardsForMe[i] - 1].hosted = true
-	}
-
-	go server.ttlCleanupLoop()
-	go server.shardMapListenLoop()
-	server.handleShardMapUpdate()
-	return &server
 }
 
 func (server *KvServerImpl) ttlCleanupLoop() {
@@ -127,9 +173,9 @@ func (server *KvServerImpl) Get(
 	}
 
 	shardID := GetShardForKey(request.Key, server.numShards)
-	shard := server.shards[shardID-1]
+	shard, exists := server.shards[shardID-1]
 
-	if !shard.hosted {
+	if !exists || shard == nil || !shard.hosted {
 		return &proto.GetResponse{Value: "", WasFound: false}, status.Error(codes.NotFound, "Shard not hosted")
 	}
 
@@ -157,9 +203,9 @@ func (server *KvServerImpl) Set(
 	}
 
 	shardID := GetShardForKey(request.Key, server.numShards)
-	shard := server.shards[shardID-1]
+	shard, exists := server.shards[shardID-1]
 
-	if !shard.hosted {
+	if !exists || shard == nil || !shard.hosted {
 		return nil, status.Error(codes.NotFound, "Shard not hosted")
 	}
 
@@ -174,7 +220,7 @@ func (server *KvServerImpl) Set(
 
 	logrus.WithFields(
 		logrus.Fields{"node": server.nodeName, "key": request.Key, "ttl_ms": request.TtlMs},
-	).Debug("Set key with TTL")
+	).Trace("Set key with TTL")
 
 	return &proto.SetResponse{}, nil
 }
@@ -188,9 +234,9 @@ func (server *KvServerImpl) Delete(
 	}
 
 	shardID := GetShardForKey(request.Key, server.numShards)
-	shard := server.shards[shardID-1]
+	shard, exists := server.shards[shardID-1]
 
-	if !shard.hosted {
+	if !exists || shard == nil || !shard.hosted {
 		return nil, status.Error(codes.NotFound, "Shard not hosted")
 	}
 
@@ -201,15 +247,76 @@ func (server *KvServerImpl) Delete(
 
 	logrus.WithFields(
 		logrus.Fields{"node": server.nodeName, "key": request.Key},
-	).Debug("Delete key")
+	).Trace("Delete key")
 
 	return &proto.DeleteResponse{}, nil
 }
 
 
 func (server *KvServerImpl) GetShardContents(
-	ctx context.Context,
-	request *proto.GetShardContentsRequest,
+    ctx context.Context,
+    request *proto.GetShardContentsRequest,
 ) (*proto.GetShardContentsResponse, error) {
-	panic("TODO: Part C")
+    shardID := int(request.Shard)
+    shard, exists := server.shards[shardID-1]
+
+    if !exists || !shard.hosted {
+        return nil, status.Error(codes.NotFound, "Shard not hosted on this server")
+    }
+
+    shard.lock.RLock()
+    defer shard.lock.RUnlock()
+
+    var values []*proto.GetShardValue
+    now := time.Now()
+    for key, entry := range shard.data {
+        if entry.expiresAt.After(now) {
+            values = append(values, &proto.GetShardValue{
+                Key:            key,
+                Value:          entry.value,
+                TtlMsRemaining: int64(entry.expiresAt.Sub(now).Milliseconds()),
+            })
+        }
+    }
+
+    return &proto.GetShardContentsResponse{Values: values}, nil
+}
+
+func (server *KvServerImpl) copyShardData(shardID int) error {
+    peers := server.shardMap.NodesForShard(shardID)
+    for _, peer := range peers {
+        if peer == server.nodeName {
+            continue
+        }
+
+        client, err := server.clientPool.GetClient(peer)
+        if err != nil {
+            logrus.WithFields(logrus.Fields{"shard": shardID, "peer": peer}).Debug("Failed to get client")
+            continue
+        }
+
+        response, err := client.GetShardContents(context.Background(), &proto.GetShardContentsRequest{Shard: int32(shardID)})
+        if err != nil {
+            logrus.WithFields(logrus.Fields{"shard": shardID, "peer": peer}).Debug("Failed to get shard contents")
+            continue
+        }
+
+        shard := server.shards[shardID-1]
+        shard.lock.Lock()
+        defer shard.lock.Unlock()
+
+        now := time.Now()
+        for _, entry := range response.Values {
+            shard.data[entry.Key] = &ValueEntry{
+                value:     entry.Value,
+                expiresAt: now.Add(time.Duration(entry.TtlMsRemaining) * time.Millisecond),
+            }
+        }
+        
+        shard.hosted = true
+        return nil
+    }
+
+    logrus.WithFields(logrus.Fields{"shard": shardID}).Debug("Failed to copy shard data from all peers")
+    return status.Error(codes.Unavailable, "Failed to copy shard data from all peers")
 }
