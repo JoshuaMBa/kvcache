@@ -57,14 +57,11 @@ func (kv *Kv) Get(ctx context.Context, key string) (string, bool, error) {
 			Key: key,
 		})
 		if err == nil {
-			break
+			return response.Value, response.WasFound, nil
 		}
 	}
-	if err != nil {
-		return "", false, err
-	}
 
-	return response.Value, response.WasFound, nil
+	return "", false, err
 }
 
 func (kv *Kv) Set(ctx context.Context, key string, value string, ttl time.Duration) error {
