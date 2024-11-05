@@ -170,14 +170,18 @@ func (server *KvServerImpl) Get(
 	}
 
 	shardID := GetShardForKey(request.Key, server.numShards)
-	shard, exists := server.shards[shardID-1]
+	shard, have_shard := server.shards[shardID-1]
 
-	if !exists || shard == nil || !shard.hosted {
+	if !have_shard || shard == nil {
 		return &proto.GetResponse{Value: "", WasFound: false}, status.Error(codes.NotFound, "Shard not hosted")
 	}
 
 	shard.lock.RLock()
 	defer shard.lock.RUnlock()
+	
+	if !shard.hosted {
+		return &proto.GetResponse{Value: "", WasFound: false}, status.Error(codes.NotFound, "Shard not hosted")
+	}
 
 	entry, exists := shard.data[request.Key]
 	if !exists || time.Now().After(entry.expiresAt) {
@@ -200,9 +204,16 @@ func (server *KvServerImpl) Set(
 	}
 
 	shardID := GetShardForKey(request.Key, server.numShards)
-	shard, exists := server.shards[shardID-1]
+	shard, have_shard := server.shards[shardID-1]
 
-	if !exists || shard == nil || !shard.hosted {
+	if !have_shard || shard == nil {
+		return nil, status.Error(codes.NotFound, "Shard not hosted")
+	}
+
+	shard.lock.Lock()
+	defer shard.lock.Unlock()
+	
+	if !shard.hosted {
 		return nil, status.Error(codes.NotFound, "Shard not hosted")
 	}
 
@@ -231,14 +242,18 @@ func (server *KvServerImpl) Delete(
 	}
 
 	shardID := GetShardForKey(request.Key, server.numShards)
-	shard, exists := server.shards[shardID-1]
+	shard, have_shard := server.shards[shardID-1]
 
-	if !exists || shard == nil || !shard.hosted {
+	if !have_shard || shard == nil {
 		return nil, status.Error(codes.NotFound, "Shard not hosted")
 	}
 
 	shard.lock.Lock()
 	defer shard.lock.Unlock()
+	
+	if !shard.hosted {
+		return nil, status.Error(codes.NotFound, "Shard not hosted")
+	}
 
 	delete(shard.data, request.Key)
 
@@ -254,14 +269,18 @@ func (server *KvServerImpl) GetShardContents(
 	request *proto.GetShardContentsRequest,
 ) (*proto.GetShardContentsResponse, error) {
 	shardID := int(request.Shard)
-	shard, exists := server.shards[shardID-1]
+	shard, have_shard := server.shards[shardID-1]
 
-	if !exists || !shard.hosted {
+	if !have_shard {
 		return nil, status.Error(codes.NotFound, "Shard not hosted on this server")
 	}
 
 	shard.lock.RLock()
 	defer shard.lock.RUnlock()
+
+	if !shard.hosted {
+		return nil, status.Error(codes.NotFound, "Shard not hosted on this server")
+	}
 
 	var values []*proto.GetShardValue
 	now := time.Now()

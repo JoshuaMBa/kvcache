@@ -13,3 +13,4 @@ Date   Started  Spent  Work completed
 
 DISCUSSION
 
+I worked on the server side for this project. I definitely could have done part A much quicker if I had not introduced some off-by-one errors that ended up costing about an hour when trying to debug. Otherwise, part A went fairly smoothly, and most of the time was just understanding what needed to be made and reading other parts of the starter code to understand how this should be written. For part C, this was also pretty straightforward. The off-by-one errors returned, but knowing that they would be there, I had an easier time navigating them. Other than these idiosyncrasies, the problem set went very smoothly from my end.
