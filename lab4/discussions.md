@@ -57,4 +57,10 @@ client would observe would be that they if they try to read data that they just 
 because the client could read from a node that didn't receive the update.
 
 
+**Group Work**
 
+Ayush handled implementing the server side. He did parts A (except additional tests) and C.
+
+Josh handled implementing the client side. He did part B.
+
+Michael handled edge casing/stress testing. He did part D and the extra tests.
