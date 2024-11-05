@@ -313,6 +313,6 @@ func (server *KvServerImpl) copyShardData(shardID int) error {
 		return nil
 	}
 
-	logrus.WithFields(logrus.Fields{"shard": shardID}).Debug("Failed to copy shard data from all peers")
+	logrus.WithFields(logrus.Fields{"shard": shardID}).Error("Failed to copy shard data from all peers")
 	return status.Error(codes.Unavailable, "Failed to copy shard data from all peers")
 }
