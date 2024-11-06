@@ -217,9 +217,6 @@ func (server *KvServerImpl) Set(
 		return nil, status.Error(codes.NotFound, "Shard not hosted")
 	}
 
-	shard.lock.Lock()
-	defer shard.lock.Unlock()
-
 	expiry := time.Now().Add(time.Duration(request.TtlMs) * time.Millisecond)
 	shard.data[request.Key] = &ValueEntry{
 		value:     request.Value,
