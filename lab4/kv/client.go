@@ -90,7 +90,7 @@ func (kv *Kv) Set(ctx context.Context, key string, value string, ttl time.Durati
 			_, set := kvClient.Set(ctx, &proto.SetRequest{
 				Key:   key,
 				Value: value,
-				TtlMs: int64(ttl),
+				TtlMs: ttl.Milliseconds(),
 			})
 
 			if set != nil {
