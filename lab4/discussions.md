@@ -56,6 +56,45 @@ application logic that relies on the latest data being available across the clus
 client would observe would be that they if they try to read data that they just wrote, the read may fail 
 because the client could read from a node that didn't receive the update.
 
+**D2**
+
+sudo go run cmd/stress/tester.go --shardmap shardmaps/single-node.json --get-qps=250 --set-qps=250 --num-keys=1 -log-level=error
+Stress test completed!
+Get requests: 15020/15020 succeeded = 100.000000% success rate
+Set requests: 15020/15020 succeeded = 100.000000% success rate
+Correct responses: 1103/1103 = 100.000000%
+Total requests: 30040 = 500.656509 QPS
+
+I wanted to test how much the server can handle since shards are currently locked together, meaning that it would be very possible that it fails often. Indeed, it looks like the responses it could actually provide was incredibly low (1.1k/15k). This makes sense. Without num-keys=1, it was at 15000/15000 correct responses, which is much better, and makes sense for a more spread out load (5 shards vs everything hitting just 1).
+
+cat shardmaps/test-3-node-start.json > shardmaps/test-3-node-file.json ; sudo go run cmd/stress/tester.go --shardmap shardmaps/test-3-node-file.json -log-level=error & (sleep 30 ; cat shardmaps/test-3-node-change.json > shardmaps/test-3-node-file.json)
+Stress test completed!
+Get requests: 6020/6020 succeeded = 100.000000% success rate
+Set requests: 1820/1820 succeeded = 100.000000% success rate
+Correct responses: 6018/6018 = 100.000000%
+Total requests: 7840 = 130.659850 QPS
+
+This test starts with the shardmap in shardmaps/test-3-node-start.json and changes to shardmaps/test-3-node-change.json after 30 seconds. I wanted to test how the servers do with the change in the mapping in the middle, and it works as expected. Here are the shardmaps (the start is the same as the given test-3-node.json, but the map it changes to is my own).
+
+test-3-node-start.json
+
+"shards": {
+    "1": ["n1", "n3"],
+    "2": ["n1"],
+    "3": ["n2", "n3"],
+    "4": ["n1", "n2", "n3"],
+    "5": ["n2"]
+}
+
+test-3-node-change.json
+
+"shards": {
+    "1": ["n2", "n3"],
+    "2": ["n1", "n2"],
+    "3": ["n2", "n3"],
+    "4": ["n1", "n3"],
+    "5": ["n2", "n1"]
+}
 
 **Group Work**
 
