@@ -5,9 +5,15 @@ ESTIMATE of time to complete assignment: 10 hours
        Time     Time
 Date   Started  Spent  Work completed
 -----  -------  -----  --------------
-
+11/6      5:00     3h  worked on integration tests
+11/7     10:00     3h  added test cases
                 -----
-                  TOTAL time spent
+                6:00 TOTAL time spent
 
 DISCUSSION
-
+This wasn't too difficult, I mostly focused on just running the integration tests.
+I think my biggest difficulty was in understanding how the lab infrastructure worked
+so that I could come up with a strategy to implement test for GetShardContents. But
+I think I ultimately came up with a pretty effective series of tests, which I described
+and coded with the help of ChatGPT. I'm particularly interested in the distribution test,
+which we haven't had a chance to run because we have yet to implement it.

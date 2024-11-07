@@ -178,7 +178,7 @@ func (server *KvServerImpl) Get(
 
 	shard.lock.RLock()
 	defer shard.lock.RUnlock()
-	
+
 	if !shard.hosted {
 		return &proto.GetResponse{Value: "", WasFound: false}, status.Error(codes.NotFound, "Shard not hosted")
 	}
@@ -212,7 +212,7 @@ func (server *KvServerImpl) Set(
 
 	shard.lock.Lock()
 	defer shard.lock.Unlock()
-	
+
 	if !shard.hosted {
 		return nil, status.Error(codes.NotFound, "Shard not hosted")
 	}
@@ -247,7 +247,7 @@ func (server *KvServerImpl) Delete(
 
 	shard.lock.Lock()
 	defer shard.lock.Unlock()
-	
+
 	if !shard.hosted {
 		return nil, status.Error(codes.NotFound, "Shard not hosted")
 	}
@@ -329,6 +329,6 @@ func (server *KvServerImpl) copyShardData(shardID int) error {
 		return nil
 	}
 
-	logrus.WithFields(logrus.Fields{"shard": shardID}).Error("Failed to copy shard data from all peers")
+	logrus.WithFields(logrus.Fields{"nodename": server.nodeName, "shard": shardID}).Error("Failed to copy shard data from all peers")
 	return status.Error(codes.Unavailable, "Failed to copy shard data from all peers")
 }
