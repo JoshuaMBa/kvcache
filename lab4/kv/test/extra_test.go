@@ -2,6 +2,7 @@ package kvtest
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -18,6 +19,22 @@ import (
 // Tests are run from an external package, so you are testing the public API
 // only. You can make methods public (e.g. utils) by making them Capitalized.
 
-func TestYourTest1(t *testing.T) {
-	assert.True(t, true)
+func TestIntegrationClientTtl(t *testing.T) {
+	setup := MakeTestSetup(MakeBasicOneShard())
+
+	err := setup.Set("abc", "123", 500*time.Millisecond)
+	assert.Nil(t, err)
+	assert.Equal(t, 1, setup.clientPool.GetRequestsSent("n1"))
+
+	_, wasFound, _ := setup.Get("abc")
+	assert.True(t, wasFound)
+
+	time.Sleep(800 * time.Millisecond)
+	assert.Equal(t, 2, setup.clientPool.GetRequestsSent("n1"))
+
+	_, wasFound, _ = setup.Get("abc")
+	assert.False(t, wasFound)
+	assert.Equal(t, 3, setup.clientPool.GetRequestsSent("n1"))
+
+	setup.Shutdown()
 }
